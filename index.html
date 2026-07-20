@@ -1,52 +1,66 @@
-<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Mobile CAD v0.2</title>
-<style>
-html,body{margin:0;height:100%;overflow:hidden;background:#1f1f1f;font-family:sans-serif}
-#ui{position:fixed;bottom:10px;left:10px;display:flex;gap:8px;z-index:10}
-button{padding:10px 14px;font-size:16px}
-#info{position:fixed;top:10px;left:10px;background:#0008;color:#fff;padding:8px;border-radius:8px;z-index:10}
-</style></head><body>
-<div id="info">Selected: Cube 1</div>
-<div id="ui">
-<button onclick="addCube()">+ Cube</button>
-<button onclick="mode('translate')">Move</button>
-<button onclick="mode('rotate')">Rotate</button>
-<button onclick="mode('scale')">Scale</button>
-</div>
-<script type="importmap">
-{"imports":{
-"three":"https://unpkg.com/three@0.167.1/build/three.module.js",
-"three/addons/":"https://unpkg.com/three@0.167.1/examples/jsm/"
-}}
-</script>
-<script type="module">
-import * as THREE from "three";
-import {OrbitControls} from "three/addons/controls/OrbitControls.js";
-import {TransformControls} from "three/addons/controls/TransformControls.js";
-const r=new THREE.WebGLRenderer({antialias:true});
-r.setSize(innerWidth,innerHeight);document.body.appendChild(r.domElement);
-const s=new THREE.Scene();s.background=new THREE.Color(0x222222);
-const c=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);c.position.set(4,4,4);
-const orbit=new OrbitControls(c,r.domElement);
-s.add(new THREE.GridHelper(20,20));
-s.add(new THREE.AxesHelper(2));
-s.add(new THREE.HemisphereLight(0xffffff,0x444444,2));
-const tc=new TransformControls(c,r.domElement);s.add(tc);
-tc.addEventListener("dragging-changed",e=>orbit.enabled=!e.value);
-const ray=new THREE.Raycaster();const mouse=new THREE.Vector2();
-let count=1;
-window.mode=m=>tc.setMode(m);
-window.addCube=()=>{
- const mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({color:0x4ea3ff}));
- mesh.name="Cube "+(++count);s.add(mesh);tc.attach(mesh);document.getElementById("info").textContent="Selected: "+mesh.name;
-}
-const cube=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({color:0x4ea3ff}));
-cube.name="Cube 1";s.add(cube);tc.attach(cube);
-r.domElement.addEventListener("pointerdown",e=>{
-mouse.x=e.clientX/innerWidth*2-1;mouse.y=-(e.clientY/innerHeight)*2+1;
-ray.setFromCamera(mouse,c);const hits=ray.intersectObjects(s.children,false);
-for(const h of hits){if(h.object.geometry){tc.attach(h.object);document.getElementById("info").textContent="Selected: "+h.object.name;break;}}
-});
-addEventListener("resize",()=>{c.aspect=innerWidth/innerHeight;c.updateProjectionMatrix();r.setSize(innerWidth,innerHeight);});
-(function anim(){requestAnimationFrame(anim);orbit.update();r.render(s,c);})();
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#111827">
+  <title>Mobile CAD</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main id="app">
+    <canvas id="viewport"></canvas>
+
+    <header class="topbar">
+      <div>
+        <strong>Mobile CAD</strong>
+        <span id="status">Cube 1 selected</span>
+      </div>
+      <button id="resetView" class="icon-button">Reset View</button>
+    </header>
+
+    <aside id="inspector" class="inspector">
+      <div class="inspector-title">
+        <span id="selectedName">Cube 1</span>
+        <button id="closeInspector" aria-label="Close inspector">×</button>
+      </div>
+      <div class="coords" id="coords">
+        <span>X <b id="xPos">0.00</b></span>
+        <span>Y <b id="yPos">0.50</b></span>
+        <span>Z <b id="zPos">0.00</b></span>
+      </div>
+    </aside>
+
+    <section class="bottom-sheet">
+      <div class="tool-row add-row">
+        <button data-add="cube">Cube</button>
+        <button data-add="cylinder">Cylinder</button>
+        <button data-add="cone">Cone</button>
+        <button data-add="sphere">Sphere</button>
+      </div>
+
+      <div class="tool-row action-row">
+        <button class="mode active" data-mode="translate">Move</button>
+        <button class="mode" data-mode="rotate">Rotate</button>
+        <button class="mode" data-mode="scale">Scale</button>
+        <button id="duplicate">Duplicate</button>
+        <button id="delete" class="danger">Delete</button>
+      </div>
+    </section>
+
+    <div id="toast" class="toast"></div>
+  </main>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.167.1/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.167.1/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
