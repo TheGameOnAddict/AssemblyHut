@@ -1,10 +1,12 @@
-MOBILE CAD V0.4 — SINGLE FILE
+Upload only index.html to your GitHub repository root.
 
-Upload only index.html to the root of your GitHub repository.
+Delete old:
+- app.js
+- style.css
+- manifest.json
+- sw.js
+- icons folder
 
-You do not need an icons folder, manifest file, service worker, or app.js.
+README is optional.
 
-After GitHub Pages redeploys, open:
-https://YOUR-USERNAME.github.io/YOUR-REPOSITORY/?v=4
-
-This version requires an internet connection because Three.js loads from jsDelivr.
+After commit, open the site with ?v=5 once.
