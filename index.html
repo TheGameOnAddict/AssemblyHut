@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
   <meta name="theme-color" content="#f3f4f6">
-  <title>Mobile CAD v0.9</title>
+  <title>Mobile CAD v0.10</title>
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f3f4f6;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
@@ -27,17 +27,22 @@
     #toast{position:fixed;left:50%;bottom:155px;z-index:20;transform:translateX(-50%) translateY(8px);padding:9px 14px;border-radius:999px;background:#0f172a;color:#111827;border:1px solid #cbd5e1;opacity:0;transition:.2s;pointer-events:none;font-size:13px}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
+    .workspace-bar{position:fixed;top:calc(env(safe-area-inset-top) + 58px);left:50%;transform:translateX(-50%);z-index:12;display:flex;align-items:center;gap:6px;padding:6px;border-radius:14px;background:#fffffff0;border:1px solid #cbd5e1;backdrop-filter:blur(14px);max-width:calc(100vw - 24px)}
+    .workspace-bar button{min-height:34px;font-size:11px;white-space:nowrap}
+    .workspace-bar span{font-size:11px;color:#475569;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 6px}
+    .workspace-mode.active{background:#2563eb;color:white}
     .selection-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
     .selection-tools button{min-height:38px;font-size:12px}
     .selection-tools button.active{background:#2563eb;color:white}
     .selection-count{margin-top:8px;font-size:12px;color:#64748b}
-    .parts-panel{position:fixed;top:calc(env(safe-area-inset-top) + 72px);right:12px;z-index:10;width:min(280px,42vw);max-height:48vh;padding:12px;border-radius:16px;background:#fffffff0;color:#111827;border:1px solid #cbd5e1;backdrop-filter:blur(14px);overflow:hidden}
+    .parts-panel{position:fixed;top:calc(env(safe-area-inset-top) + 112px);right:12px;z-index:10;width:min(280px,42vw);max-height:48vh;padding:12px;border-radius:16px;background:#fffffff0;color:#111827;border:1px solid #cbd5e1;backdrop-filter:blur(14px);overflow:hidden}
     .parts-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
     .parts-header button{min-height:32px;padding:0 10px;font-size:12px}
     .parts-list{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:calc(48vh - 55px)}
     .part-card{background:#f1f5f9;border:1px solid #dbe3ec;border-radius:12px;padding:10px}
     .part-card-name{font-weight:800;font-size:13px;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .part-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    .part-card-actions.three{grid-template-columns:1fr 1fr 1fr}
     .part-card-actions button{min-height:34px;font-size:11px;padding:0 8px}
     .library-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
     .library-tab{min-height:34px;font-size:11px}
@@ -85,6 +90,12 @@
     <button id="resetView">Reset View</button>
   </div>
 
+  <div class="workspace-bar">
+    <button class="workspace-mode active" data-workspace="part">Part Builder</button>
+    <button class="workspace-mode" data-workspace="assembly">Assembly Builder</button>
+    <span id="workspaceName">Unsaved Part Workspace</span>
+  </div>
+
   <div class="panel">
     <div class="panel-title" id="selectedName">Nothing selected</div>
     <div class="coords">
@@ -95,6 +106,8 @@
     <div class="selection-tools">
       <button id="multiSelect">Multi Select</button>
       <button id="createPart">Create Part</button>
+      <button id="saveAssembly" class="hidden">Save Assembly</button>
+      <button id="newWorkspace">New</button>
     </div>
     <div class="selection-count" id="selectionCount">0 objects selected</div>
   </div>
@@ -188,6 +201,8 @@
       let selectedObjects=[];
       let definitions=[];
       let currentLibraryTab="parts";
+      let workspaceMode="part";
+      let editingAssemblyId=null;
 
       function geometry(type){
         if(type==="cylinder") return new THREE.CylinderGeometry(.55,.55,1.2,40);
@@ -208,6 +223,10 @@
       }
 
       function add(type,position){
+        if(workspaceMode!=="part"){
+          toast("Switch to Part Builder to add primitives");
+          return;
+        }
         counter++;
         const mesh=makeMesh(type,counter-1);
         mesh.name=`${label(type)} ${counter}`;
@@ -295,6 +314,7 @@
       function removeSelected(){
         if(!selected)return toast("Select an object first");
         const doomed=selected;
+        selectedObjects=selectedObjects.filter(object=>object!==doomed);
         select(null);
         objects.splice(objects.indexOf(doomed),1);
         scene.remove(doomed);
@@ -322,7 +342,10 @@
         const hit=raycaster.intersectObjects(objects,true)[0];
         if(!hit)return;
         const target=rootSelectable(hit.object);
-        if(multiSelectMode && !target.userData?.isDefinitionInstance){
+        const validForMulti = workspaceMode==="part"
+          ? !target.userData?.isDefinitionInstance
+          : !!target.userData?.isDefinitionInstance;
+        if(multiSelectMode && validForMulti){
           toggleMultiObject(target);
         }else{
           clearMultiSelection();
@@ -456,6 +479,7 @@
       }
 
       async function createPartFromSelection(){
+        if(workspaceMode!=="part")return toast("Switch to Part Builder");
         if(selectedObjects.length<1)return toast("Select one or more primitives");
         if(selectedObjects.some(obj=>obj.userData?.isDefinitionInstance)){
           return toast("Parts must be made from primitives");
@@ -527,9 +551,28 @@
         return group;
       }
 
+      function definitionDependsOn(startId,targetId,visited=new Set()){
+        if(startId===targetId)return true;
+        if(visited.has(startId))return false;
+        visited.add(startId);
+        const definition=definitions.find(def=>def.id===startId);
+        if(!definition || definition.type!=="assembly")return false;
+        return (definition.children||[]).some(child=>
+          child.nodeType==="instance" && definitionDependsOn(child.definitionId,targetId,visited)
+        );
+      }
+
       async function insertDefinition(definitionId){
         const definition=definitions.find(def=>def.id===definitionId)||await getDefinition(definitionId);
         if(!definition)return toast("Definition not found");
+        if(workspaceMode!=="assembly"){
+          toast("Switch to Assembly Builder to insert library items");
+          return;
+        }
+        if(editingAssemblyId && definitionDependsOn(definition.id,editingAssemblyId)){
+          toast("That would create a circular assembly");
+          return;
+        }
         const group=await buildDefinitionObject(definition);
         group.position.set(0,0.5,0);
         scene.add(group);
@@ -537,6 +580,146 @@
         clearMultiSelection();
         select(group);
         toast(`${definition.name} inserted`);
+      }
+
+
+      function topLevelDefinitionInstances(){
+        return objects.filter(object=>object.userData?.isDefinitionInstance);
+      }
+
+      function instanceNodeFromObject(object,center){
+        return {
+          id:object.userData.instanceId || makeId("instance"),
+          nodeType:"instance",
+          definitionId:object.userData.definitionId,
+          name:object.name,
+          transform:{
+            position:[
+              object.position.x-center.x,
+              object.position.y-center.y,
+              object.position.z-center.z
+            ],
+            rotation:[object.rotation.x,object.rotation.y,object.rotation.z],
+            scale:[object.scale.x,object.scale.y,object.scale.z]
+          },
+          explode:{
+            direction:object.userData.explode?.direction || [0,0,0],
+            distance:object.userData.explode?.distance || 0
+          }
+        };
+      }
+
+      async function saveAssembly(){
+        if(workspaceMode!=="assembly")return toast("Switch to Assembly Builder");
+
+        let instances=selectedObjects.filter(object=>object.userData?.isDefinitionInstance);
+        if(instances.length===0)instances=topLevelDefinitionInstances();
+        if(instances.length===0)return toast("Insert at least one part or assembly");
+
+        let existing=editingAssemblyId ? definitions.find(def=>def.id===editingAssemblyId) : null;
+        const suggestedName=existing?.name || `Assembly ${definitions.filter(def=>def.type==="assembly").length+1}`;
+        const name=prompt(existing?"Update assembly name:":"Assembly name:",suggestedName);
+        if(!name)return;
+
+        const center=new THREE.Vector3();
+        instances.forEach(object=>center.add(object.position));
+        center.multiplyScalar(1/instances.length);
+
+        const definition={
+          id:existing?.id || makeId("assembly"),
+          type:"assembly",
+          name:name.trim(),
+          version:(existing?.version || 0)+1,
+          children:instances.map(object=>instanceNodeFromObject(object,center)),
+          metadata:{
+            source:"AssemblyHut",
+            childCount:instances.length
+          },
+          createdAt:existing?.createdAt
+        };
+
+        await putDefinition(definition);
+        const index=definitions.findIndex(def=>def.id===definition.id);
+        if(index>=0)definitions[index]=definition;
+        else definitions.push(definition);
+
+        editingAssemblyId=definition.id;
+        document.getElementById("workspaceName").textContent=`Editing: ${definition.name}`;
+        document.getElementById("saveAssembly").textContent="Update Assembly";
+        clearMultiSelection();
+        renderLibrary();
+        document.getElementById("dataStatus").textContent=`IndexedDB ready · ${definitions.length} definitions`;
+        toast(`${definition.name} saved`);
+      }
+
+      function clearSceneObjects(){
+        select(null);
+        clearMultiSelection();
+        for(const object of [...objects]){
+          scene.remove(object);
+          object.traverse(child=>{
+            if(child.isMesh){
+              child.geometry?.dispose();
+              child.material?.dispose();
+            }
+          });
+        }
+        objects.length=0;
+      }
+
+      async function editAssembly(definitionId){
+        const definition=definitions.find(def=>def.id===definitionId);
+        if(!definition || definition.type!=="assembly")return;
+
+        setWorkspaceMode("assembly",false);
+        clearSceneObjects();
+        editingAssemblyId=definition.id;
+        document.getElementById("workspaceName").textContent=`Editing: ${definition.name}`;
+        document.getElementById("saveAssembly").textContent="Update Assembly";
+
+        for(const child of definition.children||[]){
+          if(child.nodeType!=="instance")continue;
+          const childDefinition=definitions.find(def=>def.id===child.definitionId)||await getDefinition(child.definitionId);
+          if(!childDefinition)continue;
+          const object=await buildDefinitionObject(childDefinition,child.id);
+          applyNodeTransform(object,child.transform);
+          object.userData.explode={
+            direction:child.explode?.direction||[0,0,0],
+            distance:child.explode?.distance||0
+          };
+          scene.add(object);
+          objects.push(object);
+        }
+
+        if(objects[0])select(objects[0]);
+        toast(`${definition.name} opened`);
+      }
+
+      function newWorkspace(){
+        clearSceneObjects();
+        editingAssemblyId=null;
+        if(workspaceMode==="part"){
+          document.getElementById("workspaceName").textContent="Unsaved Part Workspace";
+          add("cube",new THREE.Vector3(0,.5,0));
+        }else{
+          document.getElementById("workspaceName").textContent="Unsaved Assembly Workspace";
+          document.getElementById("saveAssembly").textContent="Save Assembly";
+        }
+      }
+
+      function setWorkspaceMode(mode,reset=true){
+        workspaceMode=mode;
+        document.querySelectorAll(".workspace-mode").forEach(button=>{
+          button.classList.toggle("active",button.dataset.workspace===mode);
+        });
+        document.querySelector(".add").classList.toggle("hidden",mode!=="part");
+        document.getElementById("createPart").classList.toggle("hidden",mode!=="part");
+        document.getElementById("saveAssembly").classList.toggle("hidden",mode!=="assembly");
+        document.getElementById("multiSelect").textContent=mode==="part"?"Multi Select":"Select Items";
+        clearMultiSelection();
+        multiSelectMode=false;
+        document.getElementById("multiSelect").classList.remove("active");
+        if(reset)newWorkspace();
       }
 
       async function deleteDefinition(definitionId){
@@ -570,7 +753,7 @@
         if(matches.length===0){
           const empty=document.createElement("div");
           empty.className="selection-count";
-          empty.textContent=type==="part"?"No saved parts yet":"Assemblies begin in v0.10";
+          empty.textContent=type==="part"?"No saved parts yet":"No saved assemblies yet";
           list.appendChild(empty);
           return;
         }
@@ -582,8 +765,9 @@
           card.innerHTML=`
             <div class="part-card-name">${escapeHtml(definition.name)}</div>
             <div class="definition-meta">${childCount} child${childCount===1?"":"ren"} · ${definition.type}</div>
-            <div class="part-card-actions">
+            <div class="part-card-actions ${definition.type==="assembly"?"three":""}">
               <button data-insert-definition="${definition.id}">Insert</button>
+              ${definition.type==="assembly"?`<button data-edit-assembly="${definition.id}">Edit</button>`:""}
               <button class="danger" data-delete-definition="${definition.id}">Delete</button>
             </div>`;
           list.appendChild(card);
@@ -591,6 +775,9 @@
 
         list.querySelectorAll("[data-insert-definition]").forEach(button=>{
           button.onclick=()=>insertDefinition(button.dataset.insertDefinition);
+        });
+        list.querySelectorAll("[data-edit-assembly]").forEach(button=>{
+          button.onclick=()=>editAssembly(button.dataset.editAssembly).catch(console.error);
         });
         list.querySelectorAll("[data-delete-definition]").forEach(button=>{
           button.onclick=()=>deleteDefinition(button.dataset.deleteDefinition);
@@ -643,12 +830,17 @@
         document.getElementById("multiSelect").classList.toggle("active",multiSelectMode);
         if(multiSelectMode){
           select(null);
-          toast("Tap primitives to select");
+          toast(workspaceMode==="part"?"Tap primitives to select":"Tap parts or assemblies to select");
         }else{
           clearMultiSelection();
         }
       };
       document.getElementById("createPart").onclick=()=>createPartFromSelection().catch(console.error);
+      document.getElementById("saveAssembly").onclick=()=>saveAssembly().catch(console.error);
+      document.getElementById("newWorkspace").onclick=newWorkspace;
+      document.querySelectorAll(".workspace-mode").forEach(button=>{
+        button.onclick=()=>setWorkspaceMode(button.dataset.workspace);
+      });
       document.querySelectorAll(".library-tab").forEach(button=>{
         button.onclick=()=>showLibraryTab(button.dataset.libraryTab);
       });
@@ -668,6 +860,7 @@
       add("cube",new THREE.Vector3(0,.5,0));
       setMode("translate");
       updateSelectionCount();
+      setWorkspaceMode("part",false);
       initializeData();
 
       function animate(){
