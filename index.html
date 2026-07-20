@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
   <meta name="theme-color" content="#f3f4f6">
-  <title>Mobile CAD v0.7</title>
+  <title>Mobile CAD v0.8</title>
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f3f4f6;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
@@ -26,6 +26,27 @@
     #error{display:none;position:fixed;inset:20% 18px auto;z-index:50;padding:18px;border-radius:16px;background:#451a1a;color:#fee2e2;border:1px solid #ef444455;white-space:pre-wrap}
     #toast{position:fixed;left:50%;bottom:155px;z-index:20;transform:translateX(-50%) translateY(8px);padding:9px 14px;border-radius:999px;background:#0f172a;color:#111827;border:1px solid #cbd5e1;opacity:0;transition:.2s;pointer-events:none;font-size:13px}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+    .selection-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+    .selection-tools button{min-height:38px;font-size:12px}
+    .selection-tools button.active{background:#2563eb;color:white}
+    .selection-count{margin-top:8px;font-size:12px;color:#64748b}
+    .parts-panel{position:fixed;top:calc(env(safe-area-inset-top) + 72px);right:12px;z-index:10;width:min(280px,42vw);max-height:48vh;padding:12px;border-radius:16px;background:#fffffff0;color:#111827;border:1px solid #cbd5e1;backdrop-filter:blur(14px);overflow:hidden}
+    .parts-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .parts-header button{min-height:32px;padding:0 10px;font-size:12px}
+    .parts-list{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:calc(48vh - 55px)}
+    .part-card{background:#f1f5f9;border:1px solid #dbe3ec;border-radius:12px;padding:10px}
+    .part-card-name{font-weight:800;font-size:13px;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .part-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    .part-card-actions button{min-height:34px;font-size:11px;padding:0 8px}
+    .parts-panel.collapsed .parts-list{display:none}
+    .parts-panel.collapsed{width:auto}
+    @media(max-width:700px){
+      .panel{width:200px}
+      .parts-panel{top:auto;bottom:calc(env(safe-area-inset-bottom) + 148px);right:10px;width:230px;max-height:34vh}
+      .parts-list{max-height:calc(34vh - 50px)}
+    }
+
   </style>
 
   <script>
@@ -65,6 +86,19 @@
       <div>Y<b id="y">—</b></div>
       <div>Z<b id="z">—</b></div>
     </div>
+    <div class="selection-tools">
+      <button id="multiSelect">Multi Select</button>
+      <button id="createPart">Create Part</button>
+    </div>
+    <div class="selection-count" id="selectionCount">0 objects selected</div>
+  </div>
+
+  <div class="parts-panel">
+    <div class="parts-header">
+      <strong>Saved Parts</strong>
+      <button id="toggleParts">Hide</button>
+    </div>
+    <div id="partsList" class="parts-list"></div>
   </div>
 
   <div class="bottom">
@@ -130,7 +164,11 @@
       const pointer = new THREE.Vector2();
       const objects = [];
       const colors=[0x4f9cf9,0x22c55e,0xf59e0b,0xa78bfa,0xec4899,0x14b8a6];
+      const STORAGE_KEY = "assemblyhut_parts_v1";
       let selected=null, counter=0, pointerStart=null;
+      let multiSelectMode=false;
+      let selectedObjects=[];
+      let savedParts=loadParts();
 
       function geometry(type){
         if(type==="cylinder") return new THREE.CylinderGeometry(.55,.55,1.2,40);
@@ -139,24 +177,38 @@
         return new THREE.BoxGeometry(1,1,1);
       }
       function label(type){return type[0].toUpperCase()+type.slice(1)}
-      function add(type,position){
-        counter++;
+      function makeMesh(type,colorIndex=counter){
         const mesh=new THREE.Mesh(
           geometry(type),
-          new THREE.MeshStandardMaterial({color:colors[(counter-1)%colors.length],roughness:.58,metalness:.08})
+          new THREE.MeshStandardMaterial({color:colors[colorIndex%colors.length],roughness:.58,metalness:.08})
         );
-        mesh.name=`${label(type)} ${counter}`;
         mesh.userData.type=type;
         mesh.castShadow=true;
         mesh.receiveShadow=true;
+        return mesh;
+      }
+
+      function add(type,position){
+        counter++;
+        const mesh=makeMesh(type,counter-1);
+        mesh.name=`${label(type)} ${counter}`;
         mesh.position.copy(position || new THREE.Vector3((objects.length%4)*.35,type==="sphere"?.62:.5,0));
         scene.add(mesh);
         objects.push(mesh);
+        clearMultiSelection();
         select(mesh);
         toast(`${mesh.name} added`);
       }
+      function setHighlight(obj,on){
+        obj.traverse(child=>{
+          if(child.isMesh && child.material?.emissive){
+            child.material.emissive.setHex(on?0x10233f:0x000000);
+          }
+        });
+      }
+
       function select(obj){
-        if(selected?.material) selected.material.emissive.setHex(0);
+        if(selected) setHighlight(selected,false);
         selected=obj;
         if(!obj){
           transform.detach();
@@ -165,9 +217,33 @@
           ["x","y","z"].forEach(id=>document.getElementById(id).textContent="—");
           return;
         }
-        obj.material.emissive.setHex(0x10233f);
+        setHighlight(obj,true);
         transform.attach(obj);
         updateInspector();
+      }
+
+      function toggleMultiObject(obj){
+        const index=selectedObjects.indexOf(obj);
+        if(index>=0){
+          selectedObjects.splice(index,1);
+          setHighlight(obj,false);
+        }else{
+          selectedObjects.push(obj);
+          setHighlight(obj,true);
+        }
+        selected=null;
+        transform.detach();
+        updateSelectionCount();
+      }
+
+      function clearMultiSelection(){
+        selectedObjects.forEach(obj=>setHighlight(obj,false));
+        selectedObjects=[];
+        updateSelectionCount();
+      }
+
+      function updateSelectionCount(){
+        document.getElementById("selectionCount").textContent=`${selectedObjects.length} object${selectedObjects.length===1?"":"s"} selected`;
       }
       function updateInspector(){
         if(!selected)return;
@@ -185,9 +261,11 @@
       function duplicate(){
         if(!selected)return toast("Select an object first");
         counter++;
-        const clone=selected.clone();
-        clone.material=selected.material.clone();
-        clone.name=`${label(selected.userData.type)} ${counter}`;
+        const clone=selected.clone(true);
+        clone.traverse(child=>{
+          if(child.isMesh && child.material) child.material=child.material.clone();
+        });
+        clone.name=selected.userData?.isPartInstance ? `${selected.name} copy` : `${label(selected.userData.type)} ${counter}`;
         clone.position.x+=.7;
         clone.position.z+=.4;
         scene.add(clone);
@@ -200,17 +278,153 @@
         select(null);
         objects.splice(objects.indexOf(doomed),1);
         scene.remove(doomed);
-        doomed.geometry.dispose();
-        doomed.material.dispose();
+        doomed.traverse(child=>{
+          if(child.isMesh){
+            child.geometry?.dispose();
+            child.material?.dispose();
+          }
+        });
       }
+      function rootSelectable(obj){
+        let current=obj;
+        while(current.parent && current.parent!==scene){
+          if(current.parent.userData?.isPartInstance) return current.parent;
+          current=current.parent;
+        }
+        return current;
+      }
+
       function pick(x,y){
         const rect=renderer.domElement.getBoundingClientRect();
         pointer.x=((x-rect.left)/rect.width)*2-1;
         pointer.y=-((y-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(pointer,camera);
-        const hit=raycaster.intersectObjects(objects,false)[0];
-        if(hit)select(hit.object);
+        const hit=raycaster.intersectObjects(objects,true)[0];
+        if(!hit)return;
+        const target=rootSelectable(hit.object);
+        if(multiSelectMode && !target.userData?.isPartInstance){
+          toggleMultiObject(target);
+        }else{
+          clearMultiSelection();
+          select(target);
+        }
       }
+
+      function loadParts(){
+        try{
+          return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        }catch{
+          return [];
+        }
+      }
+
+      function saveParts(){
+        localStorage.setItem(STORAGE_KEY,JSON.stringify(savedParts));
+      }
+
+      function createPartFromSelection(){
+        if(selectedObjects.length<1){
+          return toast("Select one or more primitives");
+        }
+        const name=prompt("Part name:",`Part ${savedParts.length+1}`);
+        if(!name)return;
+
+        const center=new THREE.Vector3();
+        selectedObjects.forEach(obj=>center.add(obj.position));
+        center.multiplyScalar(1/selectedObjects.length);
+
+        const part={
+          id:crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+          name:name.trim(),
+          primitives:selectedObjects.map(obj=>({
+            type:obj.userData.type || "cube",
+            position:[
+              obj.position.x-center.x,
+              obj.position.y-center.y,
+              obj.position.z-center.z
+            ],
+            rotation:[obj.rotation.x,obj.rotation.y,obj.rotation.z],
+            scale:[obj.scale.x,obj.scale.y,obj.scale.z],
+            color:obj.material?.color?.getHex?.() ?? 0x4f9cf9
+          }))
+        };
+
+        savedParts.push(part);
+        saveParts();
+        renderParts();
+        clearMultiSelection();
+        multiSelectMode=false;
+        document.getElementById("multiSelect").classList.remove("active");
+        toast(`${part.name} saved locally`);
+      }
+
+      function insertPart(partId){
+        const part=savedParts.find(p=>p.id===partId);
+        if(!part)return;
+
+        const group=new THREE.Group();
+        group.userData.isPartInstance=true;
+        group.userData.partId=part.id;
+        group.name=part.name;
+
+        part.primitives.forEach((primitive,index)=>{
+          const mesh=makeMesh(primitive.type,index);
+          mesh.material.color.setHex(primitive.color ?? colors[index%colors.length]);
+          mesh.position.fromArray(primitive.position);
+          mesh.rotation.set(...primitive.rotation);
+          mesh.scale.fromArray(primitive.scale);
+          mesh.name=`${part.name} component ${index+1}`;
+          group.add(mesh);
+        });
+
+        group.position.set(0,0.5,0);
+        scene.add(group);
+        objects.push(group);
+        clearMultiSelection();
+        select(group);
+        toast(`${part.name} inserted`);
+      }
+
+      function deletePart(partId){
+        const part=savedParts.find(p=>p.id===partId);
+        if(!part)return;
+        if(!confirm(`Delete saved part "${part.name}"?`))return;
+        savedParts=savedParts.filter(p=>p.id!==partId);
+        saveParts();
+        renderParts();
+      }
+
+      function renderParts(){
+        const list=document.getElementById("partsList");
+        list.innerHTML="";
+        if(savedParts.length===0){
+          const empty=document.createElement("div");
+          empty.className="selection-count";
+          empty.textContent="No saved parts yet";
+          list.appendChild(empty);
+          return;
+        }
+        savedParts.forEach(part=>{
+          const card=document.createElement("div");
+          card.className="part-card";
+          card.innerHTML=`
+            <div class="part-card-name">${escapeHtml(part.name)}</div>
+            <div class="part-card-actions">
+              <button data-insert="${part.id}">Insert</button>
+              <button class="danger" data-delete-part="${part.id}">Delete</button>
+            </div>`;
+          list.appendChild(card);
+        });
+        list.querySelectorAll("[data-insert]").forEach(btn=>btn.onclick=()=>insertPart(btn.dataset.insert));
+        list.querySelectorAll("[data-delete-part]").forEach(btn=>btn.onclick=()=>deletePart(btn.dataset.deletePart));
+      }
+
+      function escapeHtml(value){
+        return String(value).replace(/[&<>"']/g,ch=>({
+          "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+        }[ch]));
+      }
+
       function toast(message){
         const el=document.getElementById("toast");
         el.textContent=message;
@@ -237,6 +451,22 @@
       document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
       document.getElementById("duplicate").onclick=duplicate;
       document.getElementById("delete").onclick=removeSelected;
+      document.getElementById("multiSelect").onclick=()=>{
+        multiSelectMode=!multiSelectMode;
+        document.getElementById("multiSelect").classList.toggle("active",multiSelectMode);
+        if(multiSelectMode){
+          select(null);
+          toast("Tap primitives to select");
+        }else{
+          clearMultiSelection();
+        }
+      };
+      document.getElementById("createPart").onclick=createPartFromSelection;
+      document.getElementById("toggleParts").onclick=()=>{
+        const panel=document.querySelector(".parts-panel");
+        panel.classList.toggle("collapsed");
+        document.getElementById("toggleParts").textContent=panel.classList.contains("collapsed")?"Show":"Hide";
+      };
       document.getElementById("resetView").onclick=()=>{
         camera.position.set(5.5,4.5,6.5);
         orbit.target.set(0,.6,0);
@@ -247,6 +477,8 @@
       resize();
       add("cube",new THREE.Vector3(0,.5,0));
       setMode("translate");
+      renderParts();
+      updateSelectionCount();
 
       function animate(){
         requestAnimationFrame(animate);
