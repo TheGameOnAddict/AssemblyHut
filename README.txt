@@ -1,9 +1,12 @@
-Upload only index.html to your GitHub repository root.
+Mobile CAD v0.7 — Light Mode
 
-Delete or ignore the old app.js, style.css, manifest.json, sw.js, and icons folder.
-README is optional.
+Upload only index.html to the root of your GitHub repository.
 
-After committing, open the site with ?v=6 once.
+After committing, open:
+https://thegameonaddict.github.io/AssemblyHut/?v=7
 
-Fix in v0.6:
-- Replaced transform.getHelper() with scene.add(transform) for compatibility with Three.js r167.
+Changes:
+- Light interface by default
+- Light 3D scene background
+- Lighter grid
+- Dark text and controls
