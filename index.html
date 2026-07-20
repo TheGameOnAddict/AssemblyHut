@@ -4,63 +4,247 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
   <meta name="theme-color" content="#111827">
-  <title>Mobile CAD</title>
-  <link rel="manifest" href="./manifest.json">
-  <link rel="icon" href="./icons/icon-192.png">
-  <link rel="stylesheet" href="./style.css">
+  <title>Mobile CAD v0.4</title>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111827;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+    body{touch-action:none;overscroll-behavior:none}
+    #viewport{display:block;width:100%;height:100%;touch-action:none}
+    .topbar{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;justify-content:space-between;align-items:center;padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;background:linear-gradient(#111827ee,#11182788,transparent);pointer-events:none}
+    .topbar .title{display:flex;flex-direction:column}.topbar strong{color:#fff;font-size:18px}.topbar span{color:#aab5c6;font-size:12px}
+    button{border:0;border-radius:12px;min-height:46px;padding:0 12px;background:#334155;color:#fff;font-weight:700;font-size:13px}
+    button:active{transform:scale(.97)}
+    button.active{background:#2563eb;box-shadow:0 0 0 2px #60a5fa55}
+    button.danger{background:#4b2530;color:#fecdd3}
+    #resetView{pointer-events:auto;min-height:38px}
+    .panel{position:fixed;top:calc(env(safe-area-inset-top) + 72px);left:12px;z-index:10;width:220px;padding:12px;border-radius:16px;background:#101827e8;color:#fff;border:1px solid #ffffff14;backdrop-filter:blur(14px)}
+    .panel-title{font-weight:800;margin-bottom:8px}.coords{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+    .coords div{background:#0b1220;border-radius:9px;padding:8px;text-align:center;color:#94a3b8;font-size:11px}
+    .coords b{display:block;color:#fff;font-size:13px;margin-top:2px}
+    .bottom{position:fixed;left:0;right:0;bottom:0;z-index:10;padding:10px 10px calc(env(safe-area-inset-bottom) + 10px);background:#111827f2;border-top:1px solid #ffffff12;backdrop-filter:blur(16px)}
+    .row{display:grid;gap:8px}.add{grid-template-columns:repeat(4,1fr);margin-bottom:8px}.actions{grid-template-columns:repeat(5,minmax(68px,1fr));overflow-x:auto}
+    #error{display:none;position:fixed;inset:20% 18px auto;z-index:50;padding:18px;border-radius:16px;background:#451a1a;color:#fee2e2;border:1px solid #ef444455;white-space:pre-wrap}
+    #toast{position:fixed;left:50%;bottom:155px;z-index:20;transform:translateX(-50%) translateY(8px);padding:9px 14px;border-radius:999px;background:#0f172a;color:#fff;border:1px solid #ffffff1f;opacity:0;transition:.2s;pointer-events:none;font-size:13px}
+    #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  </style>
 </head>
 <body>
-  <main id="app">
-    <canvas id="viewport"></canvas>
+  <canvas id="viewport"></canvas>
 
-    <header class="topbar">
-      <div>
-        <strong>Mobile CAD</strong>
-        <span id="status">Cube 1 selected</span>
-      </div>
-      <button id="resetView" class="icon-button">Reset View</button>
-    </header>
+  <div class="topbar">
+    <div class="title">
+      <strong>Mobile CAD</strong>
+      <span id="status">Loading scene…</span>
+    </div>
+    <button id="resetView">Reset View</button>
+  </div>
 
-    <aside id="inspector" class="inspector">
-      <div class="inspector-title">
-        <span id="selectedName">Cube 1</span>
-        <button id="closeInspector" aria-label="Close inspector">×</button>
-      </div>
-      <div class="coords" id="coords">
-        <span>X <b id="xPos">0.00</b></span>
-        <span>Y <b id="yPos">0.50</b></span>
-        <span>Z <b id="zPos">0.00</b></span>
-      </div>
-    </aside>
+  <div class="panel">
+    <div class="panel-title" id="selectedName">Nothing selected</div>
+    <div class="coords">
+      <div>X<b id="x">—</b></div>
+      <div>Y<b id="y">—</b></div>
+      <div>Z<b id="z">—</b></div>
+    </div>
+  </div>
 
-    <section class="bottom-sheet">
-      <div class="tool-row add-row">
-        <button data-add="cube">Cube</button>
-        <button data-add="cylinder">Cylinder</button>
-        <button data-add="cone">Cone</button>
-        <button data-add="sphere">Sphere</button>
-      </div>
+  <div class="bottom">
+    <div class="row add">
+      <button data-add="cube">Cube</button>
+      <button data-add="cylinder">Cylinder</button>
+      <button data-add="cone">Cone</button>
+      <button data-add="sphere">Sphere</button>
+    </div>
+    <div class="row actions">
+      <button class="mode active" data-mode="translate">Move</button>
+      <button class="mode" data-mode="rotate">Rotate</button>
+      <button class="mode" data-mode="scale">Scale</button>
+      <button id="duplicate">Duplicate</button>
+      <button id="delete" class="danger">Delete</button>
+    </div>
+  </div>
 
-      <div class="tool-row action-row">
-        <button class="mode active" data-mode="translate">Move</button>
-        <button class="mode" data-mode="rotate">Rotate</button>
-        <button class="mode" data-mode="scale">Scale</button>
-        <button id="duplicate">Duplicate</button>
-        <button id="delete" class="danger">Delete</button>
-      </div>
-    </section>
+  <div id="toast"></div>
+  <div id="error"></div>
 
-    <div id="toast" class="toast"></div>
-  </main>
+  <script type="module">
+    const errorBox = document.getElementById("error");
+    window.addEventListener("error", e => {
+      errorBox.style.display = "block";
+      errorBox.textContent = "The 3D scene failed to load.\n\n" + (e.message || "Unknown error");
+    });
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.167.1/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.167.1/examples/jsm/"
+    try {
+      const THREE = await import("https://cdn.jsdelivr.net/npm/three@0.167.1/build/three.module.js");
+      const { OrbitControls } = await import("https://cdn.jsdelivr.net/npm/three@0.167.1/examples/jsm/controls/OrbitControls.js");
+      const { TransformControls } = await import("https://cdn.jsdelivr.net/npm/three@0.167.1/examples/jsm/controls/TransformControls.js");
+
+      const canvas = document.getElementById("viewport");
+      const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+      renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+      renderer.shadowMap.enabled = true;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x111827);
+
+      const camera = new THREE.PerspectiveCamera(50,1,.1,200);
+      camera.position.set(5.5,4.5,6.5);
+
+      const orbit = new OrbitControls(camera,renderer.domElement);
+      orbit.enableDamping = true;
+      orbit.target.set(0,.6,0);
+
+      scene.add(new THREE.HemisphereLight(0xdbeafe,0x293548,2.5));
+      const light = new THREE.DirectionalLight(0xffffff,2.4);
+      light.position.set(4,8,5);
+      light.castShadow = true;
+      scene.add(light);
+
+      scene.add(new THREE.GridHelper(30,30,0x52627a,0x293548));
+      const axes = new THREE.AxesHelper(2);
+      axes.position.y=.01;
+      scene.add(axes);
+
+      const transform = new TransformControls(camera,renderer.domElement);
+      transform.setSize(.85);
+      scene.add(transform);
+      transform.addEventListener("dragging-changed",e=>orbit.enabled=!e.value);
+      transform.addEventListener("objectChange",updateInspector);
+
+      const raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      const objects = [];
+      const colors=[0x4f9cf9,0x22c55e,0xf59e0b,0xa78bfa,0xec4899,0x14b8a6];
+      let selected=null, counter=0, pointerStart=null;
+
+      function geometry(type){
+        if(type==="cylinder") return new THREE.CylinderGeometry(.55,.55,1.2,40);
+        if(type==="cone") return new THREE.ConeGeometry(.62,1.3,40);
+        if(type==="sphere") return new THREE.SphereGeometry(.62,36,24);
+        return new THREE.BoxGeometry(1,1,1);
+      }
+      function label(type){return type[0].toUpperCase()+type.slice(1)}
+      function add(type,position){
+        counter++;
+        const mesh=new THREE.Mesh(
+          geometry(type),
+          new THREE.MeshStandardMaterial({color:colors[(counter-1)%colors.length],roughness:.58,metalness:.08})
+        );
+        mesh.name=`${label(type)} ${counter}`;
+        mesh.userData.type=type;
+        mesh.castShadow=true;
+        mesh.receiveShadow=true;
+        mesh.position.copy(position || new THREE.Vector3((objects.length%4)*.35,type==="sphere"?.62:.5,0));
+        scene.add(mesh);
+        objects.push(mesh);
+        select(mesh);
+        toast(`${mesh.name} added`);
+      }
+      function select(obj){
+        if(selected?.material) selected.material.emissive.setHex(0);
+        selected=obj;
+        if(!obj){
+          transform.detach();
+          document.getElementById("selectedName").textContent="Nothing selected";
+          document.getElementById("status").textContent="Nothing selected";
+          ["x","y","z"].forEach(id=>document.getElementById(id).textContent="—");
+          return;
+        }
+        obj.material.emissive.setHex(0x10233f);
+        transform.attach(obj);
+        updateInspector();
+      }
+      function updateInspector(){
+        if(!selected)return;
+        document.getElementById("selectedName").textContent=selected.name;
+        document.getElementById("status").textContent=`${selected.name} selected`;
+        document.getElementById("x").textContent=selected.position.x.toFixed(2);
+        document.getElementById("y").textContent=selected.position.y.toFixed(2);
+        document.getElementById("z").textContent=selected.position.z.toFixed(2);
+      }
+      function setMode(mode){
+        transform.setMode(mode);
+        document.querySelectorAll(".mode").forEach(b=>b.classList.toggle("active",b.dataset.mode===mode));
+        toast(label(mode));
+      }
+      function duplicate(){
+        if(!selected)return toast("Select an object first");
+        counter++;
+        const clone=selected.clone();
+        clone.material=selected.material.clone();
+        clone.name=`${label(selected.userData.type)} ${counter}`;
+        clone.position.x+=.7;
+        clone.position.z+=.4;
+        scene.add(clone);
+        objects.push(clone);
+        select(clone);
+      }
+      function removeSelected(){
+        if(!selected)return toast("Select an object first");
+        const doomed=selected;
+        select(null);
+        objects.splice(objects.indexOf(doomed),1);
+        scene.remove(doomed);
+        doomed.geometry.dispose();
+        doomed.material.dispose();
+      }
+      function pick(x,y){
+        const rect=renderer.domElement.getBoundingClientRect();
+        pointer.x=((x-rect.left)/rect.width)*2-1;
+        pointer.y=-((y-rect.top)/rect.height)*2+1;
+        raycaster.setFromCamera(pointer,camera);
+        const hit=raycaster.intersectObjects(objects,false)[0];
+        if(hit)select(hit.object);
+      }
+      function toast(message){
+        const el=document.getElementById("toast");
+        el.textContent=message;
+        el.classList.add("show");
+        clearTimeout(toast.timer);
+        toast.timer=setTimeout(()=>el.classList.remove("show"),1100);
+      }
+      function resize(){
+        const w=innerWidth,h=innerHeight;
+        renderer.setSize(w,h,false);
+        camera.aspect=w/h;
+        camera.updateProjectionMatrix();
+      }
+
+      renderer.domElement.addEventListener("pointerdown",e=>pointerStart={x:e.clientX,y:e.clientY});
+      renderer.domElement.addEventListener("pointerup",e=>{
+        if(!pointerStart||transform.dragging)return;
+        const d=Math.hypot(e.clientX-pointerStart.x,e.clientY-pointerStart.y);
+        pointerStart=null;
+        if(d<7)pick(e.clientX,e.clientY);
+      });
+
+      document.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>add(b.dataset.add));
+      document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+      document.getElementById("duplicate").onclick=duplicate;
+      document.getElementById("delete").onclick=removeSelected;
+      document.getElementById("resetView").onclick=()=>{
+        camera.position.set(5.5,4.5,6.5);
+        orbit.target.set(0,.6,0);
+        orbit.update();
+      };
+
+      addEventListener("resize",resize);
+      resize();
+      add("cube",new THREE.Vector3(0,.5,0));
+      setMode("translate");
+
+      function animate(){
+        requestAnimationFrame(animate);
+        orbit.update();
+        renderer.render(scene,camera);
+      }
+      animate();
+    } catch (err) {
+      errorBox.style.display = "block";
+      errorBox.textContent = "The 3D scene failed to load.\n\n" + err.message;
+      document.getElementById("status").textContent = "Scene failed to load";
+      console.error(err);
     }
-  }
   </script>
-  <script type="module" src="./app.js"></script>
 </body>
 </html>
