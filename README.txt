@@ -1,18 +1,19 @@
-Mobile CAD v0.8 — Saved Parts
+Mobile CAD v0.9 — Data Foundation
 
 Upload only index.html to the root of your GitHub repository.
 
 Open:
-https://thegameonaddict.github.io/AssemblyHut/?v=8
+https://thegameonaddict.github.io/AssemblyHut/?v=9
 
-New:
-- Multi-select primitives
-- Create named reusable parts
-- Parts saved locally in browser localStorage
-- Parts library
-- Insert saved parts as grouped objects
-- Delete saved parts
+Changes:
+- IndexedDB storage
+- Unified part/assembly definition model
+- Reusable placed instances
+- Recursive nested definition rendering foundation
+- Instance IDs
+- Stored explode direction and distance fields
+- Parts and Assemblies library tabs
+- Automatic migration of v0.8 saved parts
+- Dependency protection when deleting definitions
 
-Note:
-Saved parts are stored only in the current browser/device.
-Clearing Safari website data will erase them.
+Assembly creation/editing UI arrives in v0.10.

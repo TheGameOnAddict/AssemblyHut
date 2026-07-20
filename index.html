@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
   <meta name="theme-color" content="#f3f4f6">
-  <title>Mobile CAD v0.8</title>
+  <title>Mobile CAD v0.9</title>
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f3f4f6;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
@@ -39,7 +39,13 @@
     .part-card-name{font-weight:800;font-size:13px;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .part-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .part-card-actions button{min-height:34px;font-size:11px;padding:0 8px}
-    .parts-panel.collapsed .parts-list{display:none}
+    .library-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
+    .library-tab{min-height:34px;font-size:11px}
+    .library-tab.active{background:#2563eb;color:#fff}
+    .hidden{display:none!important}
+    .data-status{font-size:10px;color:#64748b;margin-top:8px;line-height:1.3}
+    .definition-meta{font-size:10px;color:#64748b;margin-bottom:7px}
+    .parts-panel.collapsed .parts-list,.parts-panel.collapsed .library-tabs,.parts-panel.collapsed .data-status{display:none}
     .parts-panel.collapsed{width:auto}
     @media(max-width:700px){
       .panel{width:200px}
@@ -95,10 +101,16 @@
 
   <div class="parts-panel">
     <div class="parts-header">
-      <strong>Saved Parts</strong>
+      <strong>Library</strong>
       <button id="toggleParts">Hide</button>
     </div>
+    <div class="library-tabs">
+      <button class="library-tab active" data-library-tab="parts">Parts</button>
+      <button class="library-tab" data-library-tab="assemblies">Assemblies</button>
+    </div>
     <div id="partsList" class="parts-list"></div>
+    <div id="assembliesList" class="parts-list hidden"></div>
+    <div class="data-status" id="dataStatus">Opening local database…</div>
   </div>
 
   <div class="bottom">
@@ -164,11 +176,18 @@
       const pointer = new THREE.Vector2();
       const objects = [];
       const colors=[0x4f9cf9,0x22c55e,0xf59e0b,0xa78bfa,0xec4899,0x14b8a6];
-      const STORAGE_KEY = "assemblyhut_parts_v1";
+      const DB_NAME = "AssemblyHutDB";
+      const DB_VERSION = 1;
+      const DEFINITIONS_STORE = "definitions";
+      const PROJECTS_STORE = "projects";
+      const LEGACY_STORAGE_KEY = "assemblyhut_parts_v1";
+
+      let db=null;
       let selected=null, counter=0, pointerStart=null;
       let multiSelectMode=false;
       let selectedObjects=[];
-      let savedParts=loadParts();
+      let definitions=[];
+      let currentLibraryTab="parts";
 
       function geometry(type){
         if(type==="cylinder") return new THREE.CylinderGeometry(.55,.55,1.2,40);
@@ -265,7 +284,8 @@
         clone.traverse(child=>{
           if(child.isMesh && child.material) child.material=child.material.clone();
         });
-        clone.name=selected.userData?.isPartInstance ? `${selected.name} copy` : `${label(selected.userData.type)} ${counter}`;
+        clone.name=selected.userData?.isDefinitionInstance ? `${selected.name} copy` : `${label(selected.userData.type)} ${counter}`;
+        if(clone.userData?.isDefinitionInstance)clone.userData.instanceId=makeId("instance");
         clone.position.x+=.7;
         clone.position.z+=.4;
         scene.add(clone);
@@ -288,7 +308,7 @@
       function rootSelectable(obj){
         let current=obj;
         while(current.parent && current.parent!==scene){
-          if(current.parent.userData?.isPartInstance) return current.parent;
+          if(current.parent.userData?.isDefinitionInstance) return current.parent;
           current=current.parent;
         }
         return current;
@@ -302,7 +322,7 @@
         const hit=raycaster.intersectObjects(objects,true)[0];
         if(!hit)return;
         const target=rootSelectable(hit.object);
-        if(multiSelectMode && !target.userData?.isPartInstance){
+        if(multiSelectMode && !target.userData?.isDefinitionInstance){
           toggleMultiObject(target);
         }else{
           clearMultiSelection();
@@ -310,113 +330,280 @@
         }
       }
 
-      function loadParts(){
+
+      function makeId(prefix){
+        return crypto.randomUUID ? `${prefix}-${crypto.randomUUID()}` : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+
+      function openDatabase(){
+        return new Promise((resolve,reject)=>{
+          const request=indexedDB.open(DB_NAME,DB_VERSION);
+          request.onupgradeneeded=()=>{
+            const database=request.result;
+            if(!database.objectStoreNames.contains(DEFINITIONS_STORE)){
+              const store=database.createObjectStore(DEFINITIONS_STORE,{keyPath:"id"});
+              store.createIndex("type","type",{unique:false});
+              store.createIndex("name","name",{unique:false});
+            }
+            if(!database.objectStoreNames.contains(PROJECTS_STORE)){
+              database.createObjectStore(PROJECTS_STORE,{keyPath:"id"});
+            }
+          };
+          request.onsuccess=()=>{
+            db=request.result;
+            db.onversionchange=()=>db.close();
+            resolve(db);
+          };
+          request.onerror=()=>reject(request.error);
+        });
+      }
+
+      function dbRequest(storeName,mode,operation){
+        return new Promise((resolve,reject)=>{
+          const transaction=db.transaction(storeName,mode);
+          const store=transaction.objectStore(storeName);
+          const request=operation(store);
+          request.onsuccess=()=>resolve(request.result);
+          request.onerror=()=>reject(request.error);
+        });
+      }
+
+      async function getAllDefinitions(){
+        return dbRequest(DEFINITIONS_STORE,"readonly",store=>store.getAll());
+      }
+
+      async function getDefinition(id){
+        return dbRequest(DEFINITIONS_STORE,"readonly",store=>store.get(id));
+      }
+
+      async function putDefinition(definition){
+        definition.updatedAt=new Date().toISOString();
+        if(!definition.createdAt)definition.createdAt=definition.updatedAt;
+        await dbRequest(DEFINITIONS_STORE,"readwrite",store=>store.put(definition));
+      }
+
+      async function removeDefinition(id){
+        await dbRequest(DEFINITIONS_STORE,"readwrite",store=>store.delete(id));
+      }
+
+      async function migrateLegacyParts(){
+        const raw=localStorage.getItem(LEGACY_STORAGE_KEY);
+        if(!raw)return 0;
+        let legacy=[];
+        try{legacy=JSON.parse(raw)||[]}catch{return 0}
+        if(!Array.isArray(legacy)||legacy.length===0)return 0;
+
+        let migrated=0;
+        for(const oldPart of legacy){
+          if(definitions.some(def=>def.legacyId===oldPart.id))continue;
+          const definition={
+            id:makeId("part"),
+            legacyId:oldPart.id,
+            type:"part",
+            name:oldPart.name || `Migrated Part ${migrated+1}`,
+            version:1,
+            children:(oldPart.primitives||[]).map((primitive,index)=>({
+              id:makeId("primitive"),
+              nodeType:"primitive",
+              primitiveType:primitive.type || "cube",
+              name:`${label(primitive.type || "cube")} ${index+1}`,
+              transform:{
+                position:primitive.position || [0,0,0],
+                rotation:primitive.rotation || [0,0,0],
+                scale:primitive.scale || [1,1,1]
+              },
+              appearance:{color:primitive.color ?? 0x4f9cf9}
+            }))
+          };
+          await putDefinition(definition);
+          definitions.push(definition);
+          migrated++;
+        }
+        if(migrated>0)localStorage.setItem(`${LEGACY_STORAGE_KEY}_migrated`,"true");
+        return migrated;
+      }
+
+      async function initializeData(){
+        const status=document.getElementById("dataStatus");
         try{
-          return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        }catch{
-          return [];
+          await openDatabase();
+          definitions=await getAllDefinitions();
+          const migrated=await migrateLegacyParts();
+          if(migrated>0)definitions=await getAllDefinitions();
+          status.textContent=`IndexedDB ready · ${definitions.length} definition${definitions.length===1?"":"s"}`;
+          renderLibrary();
+          if(migrated>0)toast(`${migrated} saved part${migrated===1?"":"s"} migrated`);
+        }catch(error){
+          console.error(error);
+          status.textContent="Database failed — changes will not persist";
+          toast("Local database failed");
         }
       }
 
-      function saveParts(){
-        localStorage.setItem(STORAGE_KEY,JSON.stringify(savedParts));
+      function primitiveNodeFromObject(obj,center,index){
+        return {
+          id:makeId("primitive"),
+          nodeType:"primitive",
+          primitiveType:obj.userData.type || "cube",
+          name:obj.name || `Primitive ${index+1}`,
+          transform:{
+            position:[obj.position.x-center.x,obj.position.y-center.y,obj.position.z-center.z],
+            rotation:[obj.rotation.x,obj.rotation.y,obj.rotation.z],
+            scale:[obj.scale.x,obj.scale.y,obj.scale.z]
+          },
+          appearance:{color:obj.material?.color?.getHex?.() ?? 0x4f9cf9}
+        };
       }
 
-      function createPartFromSelection(){
-        if(selectedObjects.length<1){
-          return toast("Select one or more primitives");
+      async function createPartFromSelection(){
+        if(selectedObjects.length<1)return toast("Select one or more primitives");
+        if(selectedObjects.some(obj=>obj.userData?.isDefinitionInstance)){
+          return toast("Parts must be made from primitives");
         }
-        const name=prompt("Part name:",`Part ${savedParts.length+1}`);
+
+        const name=prompt("Part name:",`Part ${definitions.filter(d=>d.type==="part").length+1}`);
         if(!name)return;
 
         const center=new THREE.Vector3();
         selectedObjects.forEach(obj=>center.add(obj.position));
         center.multiplyScalar(1/selectedObjects.length);
 
-        const part={
-          id:crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        const definition={
+          id:makeId("part"),
+          type:"part",
           name:name.trim(),
-          primitives:selectedObjects.map(obj=>({
-            type:obj.userData.type || "cube",
-            position:[
-              obj.position.x-center.x,
-              obj.position.y-center.y,
-              obj.position.z-center.z
-            ],
-            rotation:[obj.rotation.x,obj.rotation.y,obj.rotation.z],
-            scale:[obj.scale.x,obj.scale.y,obj.scale.z],
-            color:obj.material?.color?.getHex?.() ?? 0x4f9cf9
-          }))
+          version:1,
+          children:selectedObjects.map((obj,index)=>primitiveNodeFromObject(obj,center,index)),
+          metadata:{source:"AssemblyHut",childCount:selectedObjects.length}
         };
 
-        savedParts.push(part);
-        saveParts();
-        renderParts();
+        await putDefinition(definition);
+        definitions.push(definition);
+        renderLibrary();
         clearMultiSelection();
         multiSelectMode=false;
         document.getElementById("multiSelect").classList.remove("active");
-        toast(`${part.name} saved locally`);
+        document.getElementById("dataStatus").textContent=`IndexedDB ready · ${definitions.length} definitions`;
+        toast(`${definition.name} saved locally`);
       }
 
-      function insertPart(partId){
-        const part=savedParts.find(p=>p.id===partId);
-        if(!part)return;
+      function applyNodeTransform(object,data){
+        const value=data||{};
+        object.position.fromArray(value.position||[0,0,0]);
+        const rotation=value.rotation||[0,0,0];
+        object.rotation.set(rotation[0],rotation[1],rotation[2]);
+        object.scale.fromArray(value.scale||[1,1,1]);
+      }
 
+      async function buildDefinitionObject(definition,instanceId=null){
         const group=new THREE.Group();
-        group.userData.isPartInstance=true;
-        group.userData.partId=part.id;
-        group.name=part.name;
+        group.name=definition.name;
+        group.userData.isDefinitionInstance=true;
+        group.userData.definitionId=definition.id;
+        group.userData.definitionType=definition.type;
+        group.userData.instanceId=instanceId||makeId("instance");
 
-        part.primitives.forEach((primitive,index)=>{
-          const mesh=makeMesh(primitive.type,index);
-          mesh.material.color.setHex(primitive.color ?? colors[index%colors.length]);
-          mesh.position.fromArray(primitive.position);
-          mesh.rotation.set(...primitive.rotation);
-          mesh.scale.fromArray(primitive.scale);
-          mesh.name=`${part.name} component ${index+1}`;
-          group.add(mesh);
-        });
+        for(let index=0;index<(definition.children||[]).length;index++){
+          const child=definition.children[index];
+          if(child.nodeType==="primitive"){
+            const mesh=makeMesh(child.primitiveType,index);
+            mesh.name=child.name||`${label(child.primitiveType)} ${index+1}`;
+            mesh.userData.nodeId=child.id;
+            mesh.material.color.setHex(child.appearance?.color ?? colors[index%colors.length]);
+            applyNodeTransform(mesh,child.transform);
+            group.add(mesh);
+          }else if(child.nodeType==="instance"){
+            const childDefinition=definitions.find(def=>def.id===child.definitionId)||await getDefinition(child.definitionId);
+            if(!childDefinition)continue;
+            const nested=await buildDefinitionObject(childDefinition,child.id);
+            applyNodeTransform(nested,child.transform);
+            nested.userData.explode={
+              direction:child.explode?.direction||[0,0,0],
+              distance:child.explode?.distance||0
+            };
+            group.add(nested);
+          }
+        }
+        return group;
+      }
 
+      async function insertDefinition(definitionId){
+        const definition=definitions.find(def=>def.id===definitionId)||await getDefinition(definitionId);
+        if(!definition)return toast("Definition not found");
+        const group=await buildDefinitionObject(definition);
         group.position.set(0,0.5,0);
         scene.add(group);
         objects.push(group);
         clearMultiSelection();
         select(group);
-        toast(`${part.name} inserted`);
+        toast(`${definition.name} inserted`);
       }
 
-      function deletePart(partId){
-        const part=savedParts.find(p=>p.id===partId);
-        if(!part)return;
-        if(!confirm(`Delete saved part "${part.name}"?`))return;
-        savedParts=savedParts.filter(p=>p.id!==partId);
-        saveParts();
-        renderParts();
+      async function deleteDefinition(definitionId){
+        const definition=definitions.find(def=>def.id===definitionId);
+        if(!definition)return;
+        if(!confirm(`Delete saved ${definition.type} "${definition.name}"?`))return;
+
+        const usedBy=definitions.filter(def=>
+          def.type==="assembly" &&
+          (def.children||[]).some(child=>child.nodeType==="instance"&&child.definitionId===definitionId)
+        );
+        if(usedBy.length>0)return toast(`Used by ${usedBy[0].name}`);
+
+        await removeDefinition(definitionId);
+        definitions=definitions.filter(def=>def.id!==definitionId);
+        renderLibrary();
+        document.getElementById("dataStatus").textContent=`IndexedDB ready · ${definitions.length} definitions`;
       }
 
-      function renderParts(){
-        const list=document.getElementById("partsList");
+      function renderLibrary(){
+        renderDefinitionList("partsList","part");
+        renderDefinitionList("assembliesList","assembly");
+        showLibraryTab(currentLibraryTab);
+      }
+
+      function renderDefinitionList(containerId,type){
+        const list=document.getElementById(containerId);
         list.innerHTML="";
-        if(savedParts.length===0){
+        const matches=definitions.filter(def=>def.type===type).sort((a,b)=>a.name.localeCompare(b.name));
+
+        if(matches.length===0){
           const empty=document.createElement("div");
           empty.className="selection-count";
-          empty.textContent="No saved parts yet";
+          empty.textContent=type==="part"?"No saved parts yet":"Assemblies begin in v0.10";
           list.appendChild(empty);
           return;
         }
-        savedParts.forEach(part=>{
+
+        matches.forEach(definition=>{
+          const childCount=(definition.children||[]).length;
           const card=document.createElement("div");
           card.className="part-card";
           card.innerHTML=`
-            <div class="part-card-name">${escapeHtml(part.name)}</div>
+            <div class="part-card-name">${escapeHtml(definition.name)}</div>
+            <div class="definition-meta">${childCount} child${childCount===1?"":"ren"} · ${definition.type}</div>
             <div class="part-card-actions">
-              <button data-insert="${part.id}">Insert</button>
-              <button class="danger" data-delete-part="${part.id}">Delete</button>
+              <button data-insert-definition="${definition.id}">Insert</button>
+              <button class="danger" data-delete-definition="${definition.id}">Delete</button>
             </div>`;
           list.appendChild(card);
         });
-        list.querySelectorAll("[data-insert]").forEach(btn=>btn.onclick=()=>insertPart(btn.dataset.insert));
-        list.querySelectorAll("[data-delete-part]").forEach(btn=>btn.onclick=()=>deletePart(btn.dataset.deletePart));
+
+        list.querySelectorAll("[data-insert-definition]").forEach(button=>{
+          button.onclick=()=>insertDefinition(button.dataset.insertDefinition);
+        });
+        list.querySelectorAll("[data-delete-definition]").forEach(button=>{
+          button.onclick=()=>deleteDefinition(button.dataset.deleteDefinition);
+        });
+      }
+
+      function showLibraryTab(tab){
+        currentLibraryTab=tab;
+        document.getElementById("partsList").classList.toggle("hidden",tab!=="parts");
+        document.getElementById("assembliesList").classList.toggle("hidden",tab!=="assemblies");
+        document.querySelectorAll(".library-tab").forEach(button=>{
+          button.classList.toggle("active",button.dataset.libraryTab===tab);
+        });
       }
 
       function escapeHtml(value){
@@ -461,7 +648,10 @@
           clearMultiSelection();
         }
       };
-      document.getElementById("createPart").onclick=createPartFromSelection;
+      document.getElementById("createPart").onclick=()=>createPartFromSelection().catch(console.error);
+      document.querySelectorAll(".library-tab").forEach(button=>{
+        button.onclick=()=>showLibraryTab(button.dataset.libraryTab);
+      });
       document.getElementById("toggleParts").onclick=()=>{
         const panel=document.querySelector(".parts-panel");
         panel.classList.toggle("collapsed");
@@ -477,8 +667,8 @@
       resize();
       add("cube",new THREE.Vector3(0,.5,0));
       setMode("translate");
-      renderParts();
       updateSelectionCount();
+      initializeData();
 
       function animate(){
         requestAnimationFrame(animate);
